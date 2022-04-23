@@ -1,0 +1,13 @@
+numpy
+torch
+matplotlib
+z3-solver
+pillow
+tqdm
+tabulate
+joblib
+gym
+pathos==0.2.8
+mpi4py==3.1.1
+mujoco-py==2.0.2.13
+    
