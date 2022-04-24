@@ -12,6 +12,10 @@ import time as timer
 import os
 import copy
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 
 def _load_latest_policy_and_logs(agent, *, policy_dir, logs_dir):
     """Loads the latest policy.
@@ -111,10 +115,35 @@ def train_agent_flip(job_name, agent,
         N = num_traj if sample_mode == 'trajectories' else num_samples
         args = dict(N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu)
 
-        import torch.nn.functional as F
-        print('[Program Distribution]', F.softmax(agent.policy.model.search_map.v, dim=0).tolist())
-        distribution_file = open('distribution.txt', 'a')
-        distribution_file.write(str(F.softmax(agent.policy.model.search_map.v, dim=0).tolist()))
+        search_map = agent.policy.model.search_map
+
+        # For SimpleSearchMap
+        if search_map.type == 'simple':
+            print('[Program Distribution]', str(F.softmax(agent.policy.model.search_map.v, dim=0).tolist()))
+            distribution_file = open('distribution.txt', 'a')
+            distribution_file.write(str(F.softmax(agent.policy.model.search_map.v, dim=0).tolist()))
+        
+        # For ArchitectureSearchMap
+        elif search_map.type == 'architecture':
+            v = nn.Parameter(torch.ones(len(search_map.options)+1), requires_grad=False)
+            for k in range(len(v)):
+                options = search_map.options
+                if k == 0:
+                    v[k] = options[0].softmax(dim=0)[0]
+                else:
+                    prev = 1
+                    for j in range(k):
+                        prev *= options[j].softmax(dim=0)[1]
+                    if k == len(v) - 1:
+                        v[k] = prev
+                    else:
+                        option_value = options[k].softmax(dim=0)
+                        v[k] = prev * option_value[0]
+
+            print('[Program Distribution]', str(v.tolist()))
+            distribution_file = open('distribution.txt', 'a')
+            distribution_file.write(str(v.tolist()))
+        
         distribution_file.write('\n')
         distribution_file.close()
 

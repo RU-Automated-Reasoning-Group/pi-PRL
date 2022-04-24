@@ -297,11 +297,12 @@ class Program(nn.Module):
 
 
 # architecture
-class SearchMap(nn.Module):
+class SimpleSearchMap(nn.Module):
     def __init__(self, depth):
         super().__init__()
 
         self.depth = depth
+        self.type = 'simple'
 
         # NOTE: for simplicity, we use softmax over a vector
         #       to represent the distribution of the programs.
@@ -318,6 +319,28 @@ class SearchMap(nn.Module):
 
     def unfreeze(self):
         self.v.requires_grad = True
+
+# architecture
+class ArchitectureSearchMap(nn.Module):
+    def __init__(self, depth):
+        super().__init__()
+
+        self.depth = depth
+        self.type = 'architecture'
+
+        # layer by layer
+        self.options = nn.ParameterList()
+        for _ in range(self.depth-1):
+            self.options.append(nn.Parameter(torch.rand(2), requires_grad=True))
+
+    def freeze(self):
+        for option in self.options:
+            option.requires_grad = False
+
+    def unfreeze(self):
+        for option in self.options:
+            option.requires_grad = True
+
 
 
 # fusion ITE programs
@@ -384,7 +407,26 @@ class FusionPrograms(nn.Module):
 
     def forward(self, x, search_map):
 
-        v = F.softmax(search_map.v, dim=0)
+        # For SimpleSearchMap
+        if search_map.type == 'simple':
+            v = F.softmax(search_map.v, dim=0)
+        # For ArchitectureSearchMap
+        elif search_map.type == 'architecture':
+            v = nn.Parameter(torch.ones(self.depth), requires_grad=False)
+            for i in range(len(v)):
+                options = search_map.options
+                if i == 0:
+                    v[i] = options[0].softmax(dim=0)[0]
+                else:
+                    prev = 1
+                    for j in range(i):
+                        prev *= options[j].softmax(dim=0)[1]
+                    if i == len(v) - 1:
+                        v[i] = prev
+                    else:
+                        option_value = options[i].softmax(dim=0)
+                        v[i] = prev * option_value[0]
+
         action = torch.zeros(x.shape[0], self.num_action_space)
 
         # primitive policies actions
@@ -469,7 +511,7 @@ class FusionPrograms(nn.Module):
 
 # program derivation graph
 class SearchFusionProgram(nn.Module):
-    def __init__(self, graph_depth, domain, beta=0.5):
+    def __init__(self, graph_depth, domain, beta=0.5, search_map_type='architecture'):
         super().__init__()
 
         # NOTE: graph_depth is different from program AST depth,
@@ -481,7 +523,11 @@ class SearchFusionProgram(nn.Module):
 
         self.domain = domain
         self.graph_depth = graph_depth
-        self.search_map = SearchMap(depth=self.graph_depth - 1)
+        self.search_map_type = search_map_type
+        if search_map_type == 'architecture':
+            self.search_map = ArchitectureSearchMap(depth=self.graph_depth - 1)
+        elif search_map_type == 'simple':
+            self.search_map = SimpleSearchMap(depth=self.graph_depth - 1)
         self.fusion_programs = FusionPrograms(depth=self.graph_depth - 1, **parse_domain(domain), beta=beta)
 
         self.search_map.unfreeze()
@@ -502,38 +548,31 @@ class SearchFusionProgram(nn.Module):
         action = self.fusion_programs(x, self.search_map)
         return action
 
-    # return a discrete program
-    def extract(self, simple=True):
+   # return a discrete program
+    def extract(self):
 
         # NOTE: there is no better method to extract a program
         #       over others. For simplicity, we can select a 
         #       program simply by its proportion.
 
-        if simple:
+        if self.search_map_type == 'simple':
             index = self.search_map.v.argmax()
-        else:
-            # program distribution
-            v = (self.search_map.v.data).softmax(dim=0).data
-
-            # w is the weights on each edge of production rules,
-            # i.e., either stay on current complexity or expand
-            # the program.
-            w = [1.0 for _ in range(len(v) - 1)]
-            w[0] = v[0]
-            for i in range(1, len(v) - 1):
-                ww = 1
-                for j in range(i):
-                    ww *= (1 - w[j]) 
-                w[i] = v[i] / ww
-
-            index = - 1
-            for i in range(len(w)):
-                if w[i] > 1 - w[i]:
-                    index = i
-                    break
-                if i == len(w) - 1:
-                    index = i + 1
-                    break
+        elif self.search_map_type == 'architecture':
+            v = nn.Parameter(torch.ones(self.graph_depth-1), requires_grad=False)
+            for i in range(len(v)):
+                options = self.search_map.options
+                if i == 0:
+                    v[i] = options[0].softmax(dim=0)[0]
+                else:
+                    prev = 1
+                    for j in range(i):
+                        prev *= options[j].softmax(dim=0)[1]
+                    if i == len(v) - 1:
+                        v[i] = prev
+                    else:
+                        option_value = options[i].softmax(dim=0)
+                        v[i] = prev * option_value[0]
+            index = v.argmax()
 
         prog = Program(depth=index + 1, **parse_domain(self.domain))
 
@@ -603,7 +642,7 @@ elif domain == 'pusher_2d':
 
  
 # program derivation graph training
-prog = SearchFusionProgram(graph_depth=6, domain=domain, beta=0.25)
+prog = SearchFusionProgram(graph_depth=6, domain=domain, beta=0.25, search_map_type='architecture')
 policy = ProgPolicy(e.spec, prog=prog, seed=SEED)
 baseline = MLPBaseline(e.spec, reg_coef=1e-3, batch_size=64, epochs=2, learn_rate=1e-3)
 agent = TRPO(e, policy, baseline, kl_dist=None, normalized_step_size=0.02,seed=SEED, save_logs=True)
