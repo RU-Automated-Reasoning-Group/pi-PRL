@@ -1,6 +1,6 @@
 # Programmatic Reinforcement Learning without Oracles
 
-Wenjie Qiu, [He Zhu](https://herowanzhu.github.io/)
+[Wenjie Qiu](https://www.linkedin.com/in/qiuwenjie/), [He Zhu](https://herowanzhu.github.io/)
 
 Rutgers University
 

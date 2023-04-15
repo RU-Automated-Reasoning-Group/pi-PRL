@@ -6,7 +6,7 @@ pillow
 tqdm
 tabulate
 joblib
-gym
+gym=0.19.0
 pathos==0.2.8
 mpi4py==3.1.1
 mujoco-py==2.0.2.13
